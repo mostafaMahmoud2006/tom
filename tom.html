@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Talking Tom - Voice Mimic</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: #1a1a24;
+      color: #ffffff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    h1 {
+      color: #4da6ff;
+      margin-bottom: 5px;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+    p.subtitle {
+      color: #aaa;
+      margin-bottom: 20px;
+    }
+    #cat-container {
+      position: relative;
+      width: 320px;
+      height: 380px;
+      background: #282c37;
+      border: 4px solid #4da6ff;
+      border-radius: 24px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+    }
+    #status {
+      position: absolute;
+      top: 15px;
+      padding: 6px 14px;
+      background: rgba(0,0,0,0.6);
+      border-radius: 12px;
+      font-size: 0.9rem;
+      font-weight: bold;
+      color: #ffcc00;
+    }
+    .controls {
+      margin-top: 25px;
+      display: flex;
+      gap: 15px;
+    }
+    button {
+      background: #4da6ff;
+      color: #fff;
+      border: none;
+      padding: 12px 24px;
+      font-size: 1rem;
+      font-weight: bold;
+      border-radius: 30px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(77, 166, 255, 0.4);
+      transition: all 0.2s ease;
+    }
+    button:hover {
+      background: #3399ff;
+      transform: translateY(-2px);
+    }
+    button:active {
+      transform: translateY(1px);
+    }
+    button:disabled {
+      background: #555;
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🐱 Talking Tom</h1>
+  <p class="subtitle">Talk into your mic and Tom will repeat back in a high-pitched voice!</p>
+
+  <div id="cat-container">
+    <div id="status">Click Start to begin</div>
+    <canvas id="tomCanvas" width="320" height="380"></canvas>
+  </div>
+
+  <div class="controls">
+    <button id="startBtn">Start Listening</button>
+  </div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const statusEl = document.getElementById('status');
+    const canvas = document.getElementById('tomCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let audioCtx, analyser, micStream;
+    let isListening = false;
+    let isSpeaking = false;
+    let mediaRecorder;
+    let audioChunks = [];
+    let silenceTimer = null;
+    let mouthOpenRatio = 0;
+
+    // Canvas Tom Drawing
+    function drawTom(mouthOpen = 0) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2 + 20;
+
+      // Ears
+      ctx.fillStyle = '#506070';
+      // Left Ear
+      ctx.beginPath();
+      ctx.moveTo(cx - 70, cy - 80);
+      ctx.lineTo(cx - 100, cy - 150);
+      ctx.lineTo(cx - 30, cy - 100);
+      ctx.fill();
+      // Right Ear
+      ctx.beginPath();
+      ctx.moveTo(cx + 70, cy - 80);
+      ctx.lineTo(cx + 100, cy - 150);
+      ctx.lineTo(cx + 30, cy - 100);
+      ctx.fill();
+
+      // Inner Ears
+      ctx.fillStyle = '#ffb6c1';
+      ctx.beginPath();
+      ctx.moveTo(cx - 65, cy - 85);
+      ctx.lineTo(cx - 88, cy - 135);
+      ctx.lineTo(cx - 38, cy - 100);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx + 65, cy - 85);
+      ctx.lineTo(cx + 88, cy - 135);
+      ctx.lineTo(cx + 38, cy - 100);
+      ctx.fill();
+
+      // Head
+      ctx.fillStyle = '#708090';
+      ctx.beginPath();
+      ctx.arc(cx, cy - 20, 90, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Cheeks
+      ctx.fillStyle = '#8a9ea7';
+      ctx.beginPath();
+      ctx.arc(cx - 40, cy + 10, 35, 0, Math.PI * 2);
+      ctx.arc(cx + 40, cy + 10, 35, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Eyes Outer
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.ellipse(cx - 35, cy - 40, 22, 30, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx + 35, cy - 40, 22, 30, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Irises (Green)
+      ctx.fillStyle = '#2ecc71';
+      ctx.beginPath();
+      ctx.arc(cx - 30, cy - 38, 12, 0, Math.PI * 2);
+      ctx.arc(cx + 30, cy - 38, 12, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Pupils
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      ctx.arc(cx - 30, cy - 38, 6, 0, Math.PI * 2);
+      ctx.arc(cx + 30, cy - 38, 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Nose
+      ctx.fillStyle = '#ff9999';
+      ctx.beginPath();
+      ctx.arc(cx, cy - 5, 10, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Mouth
+      ctx.fillStyle = '#330000';
+      const openH = 5 + mouthOpen * 35;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 30, 20, openH, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Tongue when open
+      if (mouthOpen > 0.2) {
+        ctx.fillStyle = '#ff4d4d';
+        ctx.beginPath();
+        ctx.arc(cx, cy + 30 + openH * 0.4, 12, 0, Math.PI);
+        ctx.fill();
+      }
+    }
+
+    // Audio Init
+    async function initAudio() {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        const source = audioCtx.createMediaStreamSource(micStream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+
+        setupRecorder();
+        statusEl.textContent = '👂 Listening... Speak now!';
+        startBtn.disabled = true;
+        isListening = true;
+        listenLoop();
+      } catch (err) {
+        alert('Microphone access is required for Talking Tom.');
+      }
+    }
+
+    function setupRecorder() {
+      mediaRecorder = new MediaRecorder(micStream);
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        audioChunks = [];
+        if (blob.size > 2000) {
+          playPitchShifted(blob);
+        } else {
+          resumeListening();
+        }
+      };
+    }
+
+    function listenLoop() {
+      if (!isListening || isSpeaking) return;
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(dataArray);
+
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+      let average = sum / dataArray.length;
+
+      // Listening threshold
+      if (average > 25) {
+        if (mediaRecorder.state === 'inactive') {
+          statusEl.textContent = '🎙️ Recording your voice...';
+          mediaRecorder.start();
+        }
+        clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+          if (mediaRecorder.state === 'recording') {
+            mediaRecorder.stop();
+          }
+        }, 1000); // 1 second silence detects end of speech
+      }
+
+      drawTom(0);
+      requestAnimationFrame(listenLoop);
+    }
+
+    async function playPitchShifted(blob) {
+      isSpeaking = true;
+      statusEl.textContent = '🐱 Tom is talking!';
+
+      const arrayBuffer = await blob.arrayBuffer();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+      const source = audioCtx.createBufferSource();
+      source.buffer = audioBuffer;
+
+      // Pitch shift up (High pitched squeaky voice)
+      source.playbackRate.value = 1.45; 
+
+      const playbackAnalyser = audioCtx.createAnalyser();
+      playbackAnalyser.fftSize = 256;
+      source.connect(playbackAnalyser);
+      playbackAnalyser.connect(audioCtx.destination);
+
+      source.start(0);
+
+      // Mouth animation loop during playback
+      const dataArray = new Uint8Array(playbackAnalyser.frequencyBinCount);
+      function animateTalk() {
+        if (!isSpeaking) return;
+        playbackAnalyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        let avg = sum / dataArray.length;
+
+        mouthOpenRatio = Math.min(1, avg / 60);
+        drawTom(mouthOpenRatio);
+
+        requestAnimationFrame(animateTalk);
+      }
+      animateTalk();
+
+      source.onended = () => {
+        isSpeaking = false;
+        mouthOpenRatio = 0;
+        drawTom(0);
+        resumeListening();
+      };
+    }
+
+    function resumeListening() {
+      statusEl.textContent = '👂 Listening... Speak now!';
+      listenLoop();
+    }
+
+    startBtn.addEventListener('click', () => {
+      initAudio();
+    });
+
+    // Initial render
+    drawTom(0);
+  </script>
+</body>
+</html>
